@@ -9,16 +9,9 @@ import AuthModal from './components/AuthModal';
 import { 
   getStoredSettings, 
   saveStoredSettings, 
-  getStoredStudents, 
-  saveStoredStudents, 
   getStoredAttendance, 
   saveStoredAttendance 
 } from './utils/storage';
-import { 
-  getSyncQueue, 
-  queueAttendanceForSync, 
-  processPendingSyncQueue 
-} from './utils/syncEngine';
 import { shareToWhatsApp, exportToCSV } from './utils/exportHelpers';
 
 // Database Services & Supabase Client
@@ -29,9 +22,8 @@ import {
 } from './services/attendanceService';
 import { 
   supabase, 
-  subscribeToAttendanceUpdates, 
-  unsubscribeChannel,
-  fetchStudentsByClass 
+  fetchStudentsByClass,
+  addStudentToSupabase 
 } from './utils/supabaseClient';
 import { 
   getActiveUser, 
@@ -46,9 +38,6 @@ import {
   Share2, 
   FileSpreadsheet, 
   Printer, 
-  Wifi, 
-  WifiOff, 
-  RefreshCw,
   Database,
   Loader2,
   LogOut,
@@ -103,9 +92,6 @@ export default function App() {
   const [isFetchingDB, setIsFetchingDB] = useState(false);
 
   const isOnline = useOnlineStatus();
-  const [pendingSyncCount, setPendingSyncCount] = useState(0);
-  const [isSyncing, setIsSyncing] = useState(false);
-
   const [searchQuery, setSearchQuery] = useState('');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAddStudentOpen, setIsAddStudentOpen] = useState(false);
@@ -118,6 +104,23 @@ export default function App() {
 
   const [attendance, setAttendance] = useState(() => getStoredAttendance(attendanceStorageKey, user?.id));
   const activeFetchId = useRef(0);
+
+  // Helper storage key for class-wise student caching
+  const studentCacheKey = useMemo(() => {
+    if (!user?.id || !selectedClassId) return null;
+    return `students_${user.id}_${selectedClassId}`;
+  }, [user?.id, selectedClassId]);
+
+  // Robust Normalization Function with Ordered Numbering Support
+  const normalizeStudentData = (rawList) => {
+    if (!Array.isArray(rawList)) return [];
+    return rawList.map((s, index) => ({
+      id: s.id,
+      serialNo: index + 1, // Proper sequential number ordering
+      rollNo: String(s.rollNo || s.roll_no || '').trim(),
+      name: String(s.name || s.full_name || '').trim()
+    }));
+  };
 
   // 1. Authentication lifecycle
   useEffect(() => {
@@ -154,17 +157,22 @@ export default function App() {
       }
     }
     loadDepartments();
-  }, [user]);
+  }, [user, selectedDeptId]);
 
   // 3. Fetch Classes when Selected Department changes
   useEffect(() => {
     if (!user?.id || !selectedDeptId) {
       setClasses([]);
       setSelectedClassId('');
+      setStudents([]);
       return;
     }
 
     async function loadClasses() {
+      setClasses([]);
+      setSelectedClassId('');
+      setStudents([]);
+
       const { data, error } = await supabase
         .from('classes')
         .select('*')
@@ -175,8 +183,6 @@ export default function App() {
         setClasses(data);
         if (data.length > 0) {
           setSelectedClassId(data[0].id);
-        } else {
-          setSelectedClassId('');
         }
       }
     }
@@ -192,6 +198,9 @@ export default function App() {
     }
 
     async function loadCourses() {
+      setCourses([]);
+      setSelectedCourseId('');
+
       const { data, error } = await supabase
         .from('courses')
         .select('*')
@@ -201,39 +210,48 @@ export default function App() {
         setCourses(data);
         if (data.length > 0) {
           setSelectedCourseId(data[0].id);
-        } else {
-          setSelectedCourseId('');
         }
-      } else {
-        setCourses([]);
-        setSelectedCourseId('');
       }
     }
     loadCourses();
   }, [selectedClassId]);
 
-  // 5. Fetch Students Roster when Selected Class changes
+  // 5. Fetch Students Roster matching Selected Class directly from Supabase Database
   useEffect(() => {
-    if (!selectedClassId) {
+    if (!selectedClassId || !user?.id || !studentCacheKey) {
       setStudents([]);
       return;
     }
 
     async function loadClassStudents() {
+      setStudents([]);
+
+      const localCached = localStorage.getItem(studentCacheKey);
+      if (localCached) {
+        try {
+          const parsed = JSON.parse(localCached);
+          if (Array.isArray(parsed)) {
+            setStudents(normalizeStudentData(parsed));
+          }
+        } catch (e) {
+          console.error('Cache parse error:', e);
+        }
+      }
+
       if (isOnline) {
         const roster = await fetchStudentsByClass(selectedClassId);
-        if (roster) {
-          setStudents(roster);
-          saveStoredStudents(roster, user?.id);
+        if (roster && roster.length > 0) {
+          const formatted = normalizeStudentData(roster);
+          setStudents(formatted);
+          localStorage.setItem(studentCacheKey, JSON.stringify(formatted));
+        } else if (!localCached) {
+          setStudents([]);
         }
-      } else {
-        setStudents(getStoredStudents(user?.id) || []);
       }
     }
     loadClassStudents();
-  }, [selectedClassId, isOnline, user]);
+  }, [selectedClassId, isOnline, user, studentCacheKey]);
 
-  // Handlers for creating dynamic Departments and Classes
   const handleCreateDepartment = async (e) => {
     e.preventDefault();
     if (!newDeptName.trim() || !user?.id) return;
@@ -258,7 +276,11 @@ export default function App() {
     const { error } = await supabase.from('departments').delete().eq('id', deptId);
     if (!error) {
       setDepartments(departments.filter(d => d.id !== deptId));
-      if (selectedDeptId === deptId) setSelectedDeptId('');
+      if (selectedDeptId === deptId) {
+        setSelectedDeptId('');
+        setClasses([]);
+        setStudents([]);
+      }
     }
   };
 
@@ -271,7 +293,7 @@ export default function App() {
       .insert([{ 
         department_id: selectedDeptId, 
         name: newClassName.trim(), 
-        semester: newClassSemester.trim(), 
+        semester: newClassSemester.trim() || 'Spring', 
         user_id: user.id 
       }])
       .select();
@@ -286,28 +308,42 @@ export default function App() {
     }
   };
 
-  const handleDeleteClass = async (classId) => {
-    if (!window.confirm('Are you sure you want to delete this class?')) return;
-
-    const { error } = await supabase.from('classes').delete().eq('id', classId);
-    if (!error) {
-      setClasses(classes.filter(c => c.id !== classId));
-      if (selectedClassId === classId) setSelectedClassId('');
+  const handleDeleteClass = useCallback(async (classId) => {
+    if (!window.confirm('Kya aap waqai is class aur iske tamam related data ko mukammal delete karna chahte hain?')) {
+      return;
     }
-  };
 
-  // Updated Handler for adding courses matching database schema (course_name & course_code)
-  const handleAddCourse = async (courseName) => {
+    setClasses((prev) => prev.filter(c => c.id !== classId));
+    if (selectedClassId === classId) {
+      setSelectedClassId('');
+      setStudents([]);
+    }
+
+    if (user?.id) {
+      localStorage.removeItem(`students_${user.id}_${classId}`);
+    }
+
+    if (isOnline) {
+      const { error } = await supabase.from('classes').delete().eq('id', classId);
+      if (error) {
+        alert('Class delete karne mein error aa gaya: ' + error.message);
+      } else {
+        alert('Class aur uska tamam data database se mukammal delete ho chuka hai!');
+      }
+    }
+  }, [isOnline, selectedClassId, user]);
+
+  // Updated handler to accept both courseName and instructorName
+  const handleAddCourse = async (courseName, instructorName = '') => {
     if (!selectedClassId || !selectedDeptId) {
       alert('Please select a department and class first.');
       return;
     }
 
-    // Generate unique course code to fulfill NOT NULL requirement
     const generatedCode = courseName
       .toUpperCase()
       .replace(/[^A-Z0-9]/g, '')
-      .slice(0, 6) + '_' + Math.floor(100 + Math.random() * 900);
+      .slice(0, 5) + '_' + Math.floor(100 + Math.random() * 900);
 
     const { data, error } = await supabase
       .from('courses')
@@ -315,6 +351,7 @@ export default function App() {
         class_id: selectedClassId, 
         department_id: selectedDeptId,
         course_name: courseName.trim(),
+        instructor_name: instructorName.trim(), // Instructor name saved to database
         course_code: generatedCode,
         user_id: user?.id 
       }])
@@ -336,12 +373,10 @@ export default function App() {
       if (selectedCourseId === courseId) {
         setSelectedCourseId(updated.length > 0 ? updated[0].id : '');
       }
-    } else {
-      alert('Error deleting course: ' + (error?.message || 'Unknown'));
     }
   };
 
-  // Remote Attendance & Realtime bindings
+  // Remote Attendance fetching
   useEffect(() => {
     if (!user?.id) return;
     const currentFetchId = ++activeFetchId.current;
@@ -409,15 +444,7 @@ export default function App() {
     if (user?.id) {
       saveStoredAttendance(attendanceStorageKey, newAttendancePayload, user.id);
     }
-    if (!isOnline) {
-      queueAttendanceForSync({
-        key: attendanceStorageKey,
-        attendance: newAttendancePayload,
-        timestamp: new Date().toISOString()
-      });
-      setPendingSyncCount(getSyncQueue().length);
-    }
-  }, [attendanceStorageKey, isOnline, user]);
+  }, [attendanceStorageKey, user]);
 
   const handleStatusChange = useCallback((studentId, status) => {
     setAttendance((prev) => {
@@ -443,45 +470,53 @@ export default function App() {
     updateAttendanceState(updated);
   }, [attendance, students, updateAttendanceState]);
 
+  // Professional Manual Student Addition
   const handleAddStudent = useCallback(async (newStudent) => {
-    if (!user?.id || !selectedClassId) {
-      alert('Please select a class first.');
+    if (!user?.id || !selectedDeptId || !selectedClassId || !studentCacheKey) {
+      alert('Pehle upar se Department aur Class select karein!');
       return;
     }
 
-    const studentRecord = {
-      id: newStudent.id || `std_${Date.now()}`,
-      class_id: selectedClassId,
-      roll_no: newStudent.rollNo,
-      full_name: newStudent.name,
-      email: newStudent.email || null,
-      user_id: user.id
-    };
+    const rollNoStr = String(newStudent.rollNo || '').trim();
+    const nameStr = String(newStudent.name || '').trim();
 
-    setStudents((prev) => {
-      const updated = [...prev, { id: studentRecord.id, rollNo: studentRecord.roll_no, name: studentRecord.full_name }];
-      saveStoredStudents(updated, user.id);
-      return updated;
+    if (!rollNoStr || !nameStr) {
+      alert('Roll Number aur Student Name dono lazmi hain.');
+      return;
+    }
+
+    const result = await addStudentToSupabase({
+      rollNo: rollNoStr,
+      name: nameStr,
+      departmentId: selectedDeptId,
+      classId: selectedClassId
     });
 
-    if (isOnline) {
-      await supabase.from('students').insert([studentRecord]);
+    if (result.success) {
+      const freshRoster = await fetchStudentsByClass(selectedClassId);
+      const formatted = normalizeStudentData(freshRoster);
+      setStudents(formatted);
+      localStorage.setItem(studentCacheKey, JSON.stringify(formatted));
+      alert('Student kamyabi ke sath manually add ho gaya!');
+    } else {
+      alert('Failed to add student: ' + result.error);
     }
-  }, [isOnline, selectedClassId, user]);
+  }, [user, selectedDeptId, selectedClassId, studentCacheKey]);
 
   const handleDeleteStudent = useCallback(async (id) => {
-    if (!user?.id || !window.confirm('Remove student from roster?')) return;
+    if (!user?.id || !studentCacheKey || !window.confirm('Remove student from roster?')) return;
 
     setStudents((prev) => {
       const updated = prev.filter((s) => s.id !== id);
-      saveStoredStudents(updated, user.id);
-      return updated;
+      const reindexed = normalizeStudentData(updated);
+      localStorage.setItem(studentCacheKey, JSON.stringify(reindexed));
+      return reindexed;
     });
 
     if (isOnline) {
       await supabase.from('students').delete().eq('id', id);
     }
-  }, [isOnline, user]);
+  }, [isOnline, user, studentCacheKey]);
 
   const filteredStudents = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
@@ -548,7 +583,7 @@ export default function App() {
               </label>
               <div className="flex gap-2">
                 <select
-                  value={selectedDeptId}
+                  value={selectedDeptId || ''}
                   onChange={(e) => setSelectedDeptId(e.target.value)}
                   className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-orange-500/20"
                 >
@@ -588,7 +623,7 @@ export default function App() {
               </label>
               <div className="flex gap-2">
                 <select
-                  value={selectedClassId}
+                  value={selectedClassId || ''}
                   onChange={(e) => setSelectedClassId(e.target.value)}
                   disabled={!selectedDeptId}
                   className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:outline-none disabled:opacity-50"
@@ -722,8 +757,10 @@ export default function App() {
 
       {isAddStudentOpen && (
         <AddStudentModal
-          onAdd={handleAddStudent}
+          isOpen={isAddStudentOpen}
           onClose={() => setIsAddStudentOpen(false)}
+          onAdd={handleAddStudent}
+          onAddStudent={handleAddStudent}
         />
       )}
     </div>

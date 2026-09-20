@@ -119,17 +119,19 @@ async function getOrCreateSessionId(courseId, date) {
 /**
  * Synchronizes student attendance state directly to Supabase.
  */
-export async function syncAttendanceToDB(attendanceMap, courseInput, date) {
-  let actualCourse = courseInput;
-  let actualDate = date;
+export async function syncAttendanceToDB(attendanceMap, classOrCourse, courseOrDate, dateParam) {
+  let courseInput = null;
+  let date = null;
 
-  // Auto-correct if parameters were passed in wrong order
-  if (isValidUuid(date) && !isValidUuid(courseInput)) {
-    actualCourse = date;
-    actualDate = courseInput;
+  if (dateParam !== undefined) {
+    courseInput = courseOrDate;
+    date = dateParam;
+  } else {
+    courseInput = classOrCourse;
+    date = courseOrDate;
   }
 
-  if (!attendanceMap || !actualCourse || !actualDate || isValidUuid(actualDate)) {
+  if (!attendanceMap || !courseInput || !date) {
     return { success: false, error: 'Missing or invalid parameters (attendanceMap, course, or date).' };
   }
 
@@ -137,22 +139,12 @@ export async function syncAttendanceToDB(attendanceMap, courseInput, date) {
   if (studentEntries.length === 0) return { success: true, data: [] };
 
   try {
-    const courseId = await getOrCreateCourseId(actualCourse);
-    if (!courseId) throw new Error(`Failed to resolve system UUID for course: "${actualCourse}"`);
+    const courseId = await getOrCreateCourseId(courseInput);
+    if (!courseId) throw new Error(`Failed to resolve system UUID for course: "${courseInput}"`);
 
-    const sessionId = await getOrCreateSessionId(courseId, actualDate);
+    const sessionId = await getOrCreateSessionId(courseId, date);
 
     const studentIdentifiers = studentEntries.map(([id]) => String(id).trim());
-    
-    const studentPayload = studentIdentifiers.map((cleanId) => ({
-      ...(isValidUuid(cleanId) ? { id: cleanId } : {}),
-      roll_no: cleanId,
-      full_name: `Student ${cleanId}`
-    }));
-
-    await supabase
-      .from('students')
-      .upsert(studentPayload, { onConflict: 'roll_no', ignoreDuplicates: true });
 
     const { data: dbStudents, error: fetchStudentsErr } = await supabase
       .from('students')
@@ -176,7 +168,7 @@ export async function syncAttendanceToDB(attendanceMap, courseInput, date) {
         student_id: resolvedStudentUuid,
         course_id: courseId,
         session_id: sessionId,
-        class_date: actualDate,
+        class_date: date,
         status: isObj ? record.status || 'P' : record || 'P',
         remark: isObj ? record.remark || '' : '',
         updated_at: new Date().toISOString()
@@ -199,30 +191,31 @@ export async function syncAttendanceToDB(attendanceMap, courseInput, date) {
 /**
  * Retrieves attendance records for a course on a given date.
  */
-export async function fetchAttendanceForCourse(courseInput, date) {
-  let actualCourse = courseInput;
-  let actualDate = date;
+export async function fetchAttendanceForCourse(classOrCourse, courseOrDate, dateParam) {
+  let courseInput = null;
+  let date = null;
 
-  // Auto-correct if parameters were swapped when called from UI
-  if (isValidUuid(date) && !isValidUuid(courseInput)) {
-    actualCourse = date;
-    actualDate = courseInput;
+  if (dateParam !== undefined) {
+    courseInput = courseOrDate;
+    date = dateParam;
+  } else {
+    courseInput = classOrCourse;
+    date = courseOrDate;
   }
 
-  // Safety check: if date is still a UUID or missing, return empty object safely
-  if (!actualCourse || !actualDate || isValidUuid(actualDate)) {
+  if (!courseInput || !date) {
     return {};
   }
 
   try {
-    const courseId = await getOrCreateCourseId(actualCourse);
+    const courseId = await getOrCreateCourseId(courseInput);
     if (!courseId) return {};
 
     const { data, error } = await supabase
       .from('attendance_records')
       .select('student_id, status, remark')
       .eq('course_id', courseId)
-      .eq('class_date', actualDate);
+      .eq('class_date', date);
 
     if (error) throw error;
 
@@ -243,13 +236,50 @@ export async function fetchAttendanceForCourse(courseInput, date) {
 }
 
 /**
+ * Fetches the list of registered students for a specific course/class.
+ */
+export async function fetchStudentsForCourseList(courseInput) {
+  try {
+    const { data: students, error: studError } = await supabase
+      .from('students')
+      .select('*');
+
+    if (studError) throw studError;
+    return students || [];
+  } catch (error) {
+    console.error('Failed to fetch students list:', error);
+    return [];
+  }
+}
+
+/**
+ * Fetches students filtered by specific class/department ID (Added for App.jsx sync).
+ */
+export async function fetchStudentsByClass(classId) {
+  if (!classId) return [];
+  try {
+    const { data: students, error } = await supabase
+      .from('students')
+      .select('*')
+      .eq('department_id', classId);
+
+    if (error) throw error;
+    return students || [];
+  } catch (error) {
+    console.error('Failed to fetch students by class:', error);
+    return [];
+  }
+}
+
+/**
  * Computes historical aggregate attendance percentages per student.
  */
-export async function fetchCoursePercentages(courseInput) {
-  if (!courseInput || isValidUuid(courseInput) === false && typeof courseInput !== 'string') return [];
+export async function fetchCoursePercentages(classId, courseInput) {
+  const targetCourse = courseInput || classId;
+  if (!targetCourse) return [];
 
   try {
-    const courseId = await getOrCreateCourseId(courseInput);
+    const courseId = await getOrCreateCourseId(targetCourse);
     if (!courseId) return [];
 
     const { data: viewData, error: viewError } = await supabase
@@ -295,5 +325,58 @@ export async function fetchCoursePercentages(courseInput) {
   } catch (error) {
     console.error('Failed to fetch course percentages:', error);
     return [];
+  }
+}
+
+/**
+ * Imports multiple students from a CSV text content. 
+ */
+export async function importStudentsFromCSV(csvText, courseInput) {
+  if (!csvText || !courseInput) {
+    return { success: false, error: 'CSV file text and course are required.' };
+  }
+
+  try {
+    const courseId = await getOrCreateCourseId(courseInput);
+    if (!courseId) throw new Error('Could not resolve course for import.');
+
+    const lines = csvText.split(/\r?\n/);
+    const studentsToInsert = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      const parts = line.split(',').map((p) => p.trim());
+      const rollNo = parts[0];
+      const fullName = parts[1] || `Student ${rollNo}`;
+
+      if (i === 0 && (rollNo.toLowerCase() === 'roll_no' || rollNo.toLowerCase() === 'roll no' || rollNo.toLowerCase() === 'rollno')) {
+        continue;
+      }
+
+      if (rollNo) {
+        studentsToInsert.push({
+          roll_no: rollNo,
+          full_name: fullName
+        });
+      }
+    }
+
+    if (studentsToInsert.length === 0) {
+      return { success: false, error: 'No valid student records found in the CSV file.' };
+    }
+
+    const { data, error } = await supabase
+      .from('students')
+      .upsert(studentsToInsert, { onConflict: 'roll_no', ignoreDuplicates: false })
+      .select('id, roll_no');
+
+    if (error) throw error;
+
+    return { success: true, count: data?.length || studentsToInsert.length };
+  } catch (error) {
+    console.error('CSV import failure:', error);
+    return { success: false, error: error.message || 'Failed to import students from CSV.' };
   }
 }

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Calendar, UserCheck, UserX, Clock, Users, BookOpen, Plus, Trash2, Check, Loader2 } from 'lucide-react';
+import { Calendar, UserCheck, UserX, Clock, Users, BookOpen, Plus, Trash2, Check, Loader2, User } from 'lucide-react';
 
 export default function ClassStats({ 
   settings = {}, 
@@ -9,17 +9,23 @@ export default function ClassStats({
   setSelectedCourse, 
   stats = {},
   courses = [],          
-  onAddCourse,           
-  onDeleteCourse,        
-  selectedClassId        
+  onAddCourse,          
+  onDeleteCourse,      
+  selectedClassId       
 }) {
   const [newCourseInput, setNewCourseInput] = useState('');
+  const [newInstructorInput, setNewInstructorInput] = useState('');
   const [isAddingCourse, setIsAddingCourse] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleAddCourseSubmit = async () => {
-    const trimmed = newCourseInput.trim();
-    if (!trimmed) return;
+    const trimmedCourse = newCourseInput.trim();
+    const trimmedInstructor = newInstructorInput.trim();
+
+    if (!trimmedCourse) {
+      alert('Please enter a subject name.');
+      return;
+    }
 
     if (!selectedClassId) {
       alert('Please select a class first before adding a subject.');
@@ -29,9 +35,11 @@ export default function ClassStats({
     setIsSubmitting(true);
     try {
       if (onAddCourse) {
-        await onAddCourse(trimmed);
+        // Pass both course name and instructor name to App.jsx handler
+        await onAddCourse(trimmedCourse, trimmedInstructor);
       }
       setNewCourseInput('');
+      setNewInstructorInput('');
       setIsAddingCourse(false);
     } catch (err) {
       console.error('Failed to add course:', err);
@@ -67,8 +75,9 @@ export default function ClassStats({
           <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight leading-none">
             {activeCourseObj ? activeCourseObj.course_name : (selectedCourse || "No Subject Selected")}
           </h2>
-          <p className="text-sm font-semibold text-slate-500 mt-2">
-            Instructor: <strong className="text-slate-800 font-bold">{settings.teacherName || "Instructor"}</strong>
+          <p className="text-sm font-semibold text-slate-500 mt-2 flex items-center gap-1">
+            <User className="w-4 h-4 text-orange-600" />
+            Instructor: <strong className="text-slate-800 font-bold">{activeCourseObj?.instructor_name || settings.teacherName || "Instructor not specified"}</strong>
           </p>
         </div>
 
@@ -88,7 +97,7 @@ export default function ClassStats({
                   <option value="">-- Choose Subject --</option>
                   {courses.map((crs) => (
                     <option key={crs.id} value={crs.id}>
-                      {crs.course_name}
+                      {crs.course_name} {crs.instructor_name ? `(${crs.instructor_name})` : ''}
                     </option>
                   ))}
                 </select>
@@ -132,29 +141,38 @@ export default function ClassStats({
         </div>
 
         {isAddingCourse && (
-          <div className="flex items-center gap-2 mb-3 bg-orange-50/60 p-2 rounded-xl border border-orange-200">
+          <div className="flex flex-col sm:flex-row items-center gap-2 mb-3 bg-orange-50/60 p-3 rounded-xl border border-orange-200">
             <input
               type="text"
               autoFocus
-              placeholder="Type subject name (e.g. Mobile Apps)..."
+              placeholder="Subject name (e.g. Mobile Apps)..."
               value={newCourseInput}
               onChange={(e) => setNewCourseInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleAddCourseSubmit()}
-              className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold focus:outline-none focus:border-orange-500"
+              className="flex-1 w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold focus:outline-none focus:border-orange-500"
             />
-            <button
-              onClick={handleAddCourseSubmit}
-              disabled={isSubmitting}
-              className="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm disabled:opacity-50"
-            >
-              {isSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save
-            </button>
-            <button
-              onClick={() => setIsAddingCourse(false)}
-              className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-bold"
-            >
-              Cancel
-            </button>
+            <input
+              type="text"
+              placeholder="Instructor name (e.g. Mam Mehrab)..."
+              value={newInstructorInput}
+              onChange={(e) => setNewInstructorInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAddCourseSubmit()}
+              className="flex-1 w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold focus:outline-none focus:border-orange-500"
+            />
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+              <button
+                onClick={handleAddCourseSubmit}
+                disabled={isSubmitting}
+                className="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm disabled:opacity-50"
+              >
+                {isSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save
+              </button>
+              <button
+                onClick={() => setIsAddingCourse(false)}
+                className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-bold"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         )}
 
@@ -171,7 +189,7 @@ export default function ClassStats({
                     : 'bg-white text-slate-700 border-slate-200 hover:border-orange-300 hover:bg-orange-50'
                 }`}
               >
-                <span>{crs.course_name}</span>
+                <span>{crs.course_name} {crs.instructor_name ? `(${crs.instructor_name})` : ''}</span>
                 <button
                   onClick={(e) => handleDeleteCourseClick(crs.id, crs.course_name, e)}
                   className={`opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded ${

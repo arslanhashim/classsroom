@@ -59,8 +59,6 @@ export async function getAuthenticatedUserId() {
 
 /**
  * Realtime Subscription Helper.
- * Synchronous execution avoids listener registration races in Supabase JS v2.
- *
  * @param {string} userId - Authenticated user ID to filter scope.
  * @param {Function} onUpdate - Callback payload dispatch handler.
  * @returns {import('@supabase/supabase-js').RealtimeChannel | null}
@@ -120,7 +118,7 @@ export async function unsubscribeChannel(channel) {
   }
 }
 
-// Department & Class Data Services
+// Department, Class & Student Data Services
 
 /**
  * Fetches departments associated with the user session.
@@ -145,63 +143,94 @@ export async function fetchDepartments() {
 }
 
 /**
- * Fetches student roster matching public.students schema.
- * @param {string} [departmentId]
+ * Fetches classes associated with a department.
+ * @param {string} departmentId
  */
-export async function fetchStudentsByDepartment(departmentId = null) {
+export async function fetchClassesByDepartment(departmentId) {
   try {
     const userId = await getAuthenticatedUserId();
-    if (!userId) return [];
+    if (!userId || !isValidUuid(departmentId)) return [];
 
-    let query = supabase
+    const { data, error } = await supabase
+      .from('classes')
+      .select('id, name, semester, section, session_years, department_id, created_at')
+      .eq('department_id', departmentId)
+      .eq('user_id', userId)
+      .order('name', { ascending: true });
+
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('[Data Fetch Error]: fetchClassesByDepartment failed:', err.message || err);
+    return [];
+  }
+}
+
+/**
+ * Fetches student roster strictly filtered by Class ID and User ID.
+ * Maps database 'full_name' -> frontend 'name' & 'roll_no' -> 'rollNo'.
+ * @param {string} classId
+ */
+export async function fetchStudentsByClass(classId) {
+  try {
+    const userId = await getAuthenticatedUserId();
+    if (!userId || !isValidUuid(classId)) return [];
+
+    const { data, error } = await supabase
       .from('students')
-      .select('id, roll_no, full_name, email, department_id, created_at')
-      .eq('user_id', userId);
-
-    if (departmentId && isValidUuid(departmentId)) {
-      query = query.eq('department_id', departmentId);
-    }
-
-    const { data, error } = await query.order('roll_no', { ascending: true });
+      .select('id, roll_no, full_name, email, department_id, class_id, created_at')
+      .eq('class_id', classId)
+      .eq('user_id', userId)
+      .order('roll_no', { ascending: true });
 
     if (error) throw error;
 
     return (data || []).map((s) => ({
       id: s.id,
-      rollNo: s.roll_no,
-      name: s.full_name,
+      rollNo: s.roll_no || '',
+      name: s.full_name || '', // Explicit mapping prevents UUID issue
       email: s.email || '',
       departmentId: s.department_id,
+      classId: s.class_id,
       createdAt: s.created_at,
     }));
   } catch (err) {
-    console.error('[Data Fetch Error]: fetchStudentsByDepartment failed:', err.message || err);
+    console.error('[Data Fetch Error]: fetchStudentsByClass failed:', err.message || err);
     return [];
   }
 }
 
-export const fetchStudentsByClass = fetchStudentsByDepartment;
+// Backward compatibility alias
+export const fetchStudentsByDepartment = fetchStudentsByClass;
 
 /**
- * Inserts or updates a student record in public.students.
+ * Inserts or updates a single student record ensuring proper class_id and user_id binding.
  */
-export async function addStudentToSupabase({ id, rollNo, name, email, departmentId }) {
+export async function addStudentToSupabase({ id, rollNo, name, email, departmentId, classId }) {
   try {
     const userId = await getAuthenticatedUserId();
     if (!userId) return { success: false, error: 'Authentication required.' };
 
-    if (!rollNo || !name) {
+    const cleanRollNo = String(rollNo || '').trim();
+    const cleanName = String(name || '').trim();
+
+    if (!cleanRollNo || !cleanName) {
       return { success: false, error: 'Roll number and full name are required fields.' };
+    }
+
+    if (!isValidUuid(classId)) {
+      return { success: false, error: 'Valid Class selection is required to link the student.' };
     }
 
     const studentId = id ? String(id).trim() : `std_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
     const payload = {
       id: studentId,
-      roll_no: String(rollNo).trim(),
-      full_name: String(name).trim(),
+      roll_no: cleanRollNo,
+      full_name: cleanName,
       email: email ? String(email).trim().toLowerCase() : null,
       department_id: isValidUuid(departmentId) ? departmentId : null,
+      class_id: classId,
       user_id: userId,
     };
 
@@ -212,31 +241,81 @@ export async function addStudentToSupabase({ id, rollNo, name, email, department
 
     if (error) throw error;
 
-    return { success: true, data: data[0] };
+    return { 
+      success: true, 
+      data: {
+        id: data[0].id,
+        rollNo: data[0].roll_no,
+        name: data[0].full_name,
+        email: data[0].email,
+        departmentId: data[0].department_id,
+        classId: data[0].class_id
+      } 
+    };
   } catch (err) {
     console.error('[Database Mutation Error]: addStudentToSupabase failed:', err.message || err);
     return { success: false, error: err.message || 'Operation failed.' };
   }
 }
 
+/**
+ * Inserts multiple students in batch (for CSV import) linked to a specific class and user.
+ */
+export async function addStudentsBulkToSupabase(studentsList, classId, departmentId = null) {
+  try {
+    const userId = await getAuthenticatedUserId();
+    if (!userId) return { success: false, error: 'Authentication required.' };
+
+    if (!isValidUuid(classId)) {
+      return { success: false, error: 'Valid Class ID is required for bulk import.' };
+    }
+
+    const rows = studentsList.map((s, index) => ({
+      id: s.id || `std_${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${index}`,
+      roll_no: String(s.rollNo || s.roll_no || '').trim(),
+      full_name: String(s.name || s.full_name || '').trim(),
+      email: s.email ? String(s.email).trim().toLowerCase() : null,
+      department_id: isValidUuid(departmentId) ? departmentId : null,
+      class_id: classId,
+      user_id: userId,
+    })).filter(s => s.roll_no && s.full_name);
+
+    if (rows.length === 0) {
+      return { success: false, error: 'No valid student records found to import.' };
+    }
+
+    const { data, error } = await supabase
+      .from('students')
+      .upsert(rows, { onConflict: 'id' })
+      .select();
+
+    if (error) throw error;
+
+    return { success: true, count: rows.length, data };
+  } catch (err) {
+    console.error('[Bulk Import Error]: addStudentsBulkToSupabase failed:', err.message || err);
+    return { success: false, error: err.message || 'Bulk operation failed.' };
+  }
+}
+
 // Course & Timetable Services
 
 /**
- * Fetches courses linked to authenticated user and optional department filter.
- * @param {string} [departmentId]
+ * Fetches courses linked to authenticated user and optional class filter.
+ * @param {string} [classId]
  */
-export async function fetchCourses(departmentId = null) {
+export async function fetchCourses(classId = null) {
   try {
     const userId = await getAuthenticatedUserId();
     if (!userId) return [];
 
     let query = supabase
       .from('courses')
-      .select('id, course_code, course_name, department_id')
+      .select('id, course_code, course_name, department_id, class_id')
       .eq('user_id', userId);
 
-    if (departmentId && isValidUuid(departmentId)) {
-      query = query.eq('department_id', departmentId);
+    if (classId && isValidUuid(classId)) {
+      query = query.eq('class_id', classId);
     }
 
     const { data, error } = await query.order('course_name', { ascending: true });
@@ -327,12 +406,6 @@ export async function fetchAttendanceForSession(courseId, classDate) {
 
 /**
  * Syncs attendance records in batch into public.attendance_records.
- *
- * @param {Object} params
- * @param {string} params.courseId - Course UUID
- * @param {string} params.classDate - Date string YYYY-MM-DD
- * @param {Record<string, {status: string, remark?: string}>} params.records - Map of student IDs to status payload
- * @param {string} [params.sessionId] - Attendance session UUID
  */
 export async function syncAttendanceToSupabase({ courseId, classDate, records, sessionId = null }) {
   if (!records || Object.keys(records).length === 0) return { success: true };

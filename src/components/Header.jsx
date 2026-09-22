@@ -36,14 +36,23 @@ export default function Header() {
             </div>
           </div>
 
-          {/* Developer Profile Trigger Button */}
+          {/* Developer Profile Trigger Button with Photo */}
           <button
             onClick={() => setIsDevModalOpen(true)}
-            className="p-2.5 text-xs font-bold bg-white/10 hover:bg-white/20 text-white rounded-xl backdrop-blur-sm transition-all duration-150 flex items-center gap-2 active:scale-95 border border-white/20 shadow-sm"
+            className="p-1.5 sm:px-3 sm:py-2 text-xs font-bold bg-white/10 hover:bg-white/20 text-white rounded-xl backdrop-blur-sm transition-all duration-150 flex items-center gap-2 active:scale-95 border border-white/20 shadow-sm"
             title="Developer Info"
           >
-            <div className="w-6 h-6 rounded-full bg-white text-orange-600 flex items-center justify-center font-black text-xs shadow-sm">
-              AH
+            <div className="w-7 h-7 rounded-full bg-white text-orange-600 overflow-hidden flex items-center justify-center font-black text-xs shadow-sm border border-white/40 flex-shrink-0">
+              <img 
+                src="/arsalan.jpg" 
+                alt="Arsalan Hashim" 
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  e.target.style.display = 'none';
+                  e.target.nextSibling.style.display = 'flex';
+                }}
+              />
+              <span className="hidden items-center justify-center w-full h-full bg-orange-600 text-white text-[10px]">AH</span>
             </div>
             <span className="hidden sm:inline font-semibold">Developer</span>
           </button>
@@ -65,8 +74,17 @@ export default function Header() {
               </button>
               
               <div className="flex items-center gap-4">
-                <div className="w-16 h-16 rounded-2xl bg-white text-orange-600 flex items-center justify-center font-black text-2xl shadow-lg border-2 border-white/40">
-                  AH
+                <div className="w-16 h-16 rounded-2xl bg-white text-orange-600 overflow-hidden flex items-center justify-center font-black text-2xl shadow-lg border-2 border-white/40 flex-shrink-0">
+                  <img 
+                    src="/arsalan.jpg" 
+                    alt="Arsalan Hashim" 
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                      e.target.nextSibling.style.display = 'flex';
+                    }}
+                  />
+                  <span className="hidden items-center justify-center w-full h-full bg-orange-600 text-white text-lg">AH</span>
                 </div>
                 <div>
                   <h3 className="text-xl font-black tracking-wide">Arsalan Hashim</h3>

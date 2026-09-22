@@ -53,11 +53,11 @@ export default function StudentTable({
             <thead>
               <tr className="bg-slate-100 text-slate-600 text-xs font-semibold uppercase tracking-wider border-b border-slate-200">
                 <th className="py-3 px-4 w-12 text-center">#</th>
-                <th className="py-3 px-4 w-32">Roll No</th>
-                <th className="py-3 px-4">Student Name</th>
+                <th className="py-3 px-4 w-36">Roll No / Student</th>
+                <th className="py-3 px-4 hidden sm:table-cell">Student Name</th>
                 <th className="py-3 px-4 w-28 text-center">Overall %</th>
-                <th className="py-3 px-4 text-center w-60">Attendance Status</th>
-                <th className="py-3 px-4">Remarks / Note</th>
+                <th className="py-3 px-4 text-center sm:w-60">Attendance Status</th>
+                <th className="py-3 px-4 hidden md:table-cell">Remarks / Note</th>
                 <th className="py-3 px-4 text-right w-20 no-print">Actions</th>
               </tr>
             </thead>
@@ -84,20 +84,29 @@ export default function StudentTable({
                   <tr key={student.id || student.rollNo || idx} className="hover:bg-slate-50 transition border-b border-slate-100">
                     <td className="py-3 px-4 text-center text-xs font-semibold text-slate-400">{student.serialNo || idx + 1}</td>
                     
-                    {/* Roll No Column */}
-                    <td className="py-3 px-4 font-mono text-xs font-bold text-indigo-900">
-                      <button 
-                        type="button"
-                        onClick={() => setSelectedStudentForHistory(student)}
-                        className="hover:underline hover:text-indigo-600 text-left focus:outline-none"
-                        title="View Student History"
-                      >
-                        {student.rollNo || '—'}
-                      </button>
+                    {/* Roll No Column (Mobile par name iske neeche compact show hoga) */}
+                    <td className="py-3 px-4">
+                      <div className="flex flex-col">
+                        <button 
+                          type="button"
+                          onClick={() => setSelectedStudentForHistory(student)}
+                          className="font-mono text-xs sm:text-sm font-bold text-indigo-900 hover:underline hover:text-indigo-600 text-left focus:outline-none"
+                          title="View Student History"
+                        >
+                          {student.rollNo || '—'}
+                        </button>
+                        {/* Mobile-only Name Display under Roll No */}
+                        <span 
+                          onClick={() => setSelectedStudentForHistory(student)}
+                          className="sm:hidden text-xs text-slate-500 font-medium truncate max-w-[120px] mt-0.5 cursor-pointer hover:text-orange-600"
+                        >
+                          {student.name || '—'}
+                        </span>
+                      </div>
                     </td>
 
-                    {/* Student Name Column */}
-                    <td className="py-3 px-4 font-medium text-slate-900">
+                    {/* Student Name Column (Desktop View) */}
+                    <td className="py-3 px-4 font-medium text-slate-900 hidden sm:table-cell">
                       <button 
                         type="button"
                         onClick={() => setSelectedStudentForHistory(student)}
@@ -119,14 +128,14 @@ export default function StudentTable({
                       )}
                     </td>
 
-                    {/* Interactive Status Selector */}
+                    {/* Interactive Status Selector (Roll Number ke sath properly aligned) */}
                     <td className="py-3 px-4 text-center">
                       <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1 gap-1">
                         <button
                           type="button"
                           title="Present"
                           onClick={() => onStatusChange(student.id, 'P')}
-                          className={`px-3 py-1 text-xs font-bold rounded-md transition ${status === 'P' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-200'}`}
+                          className={`px-2.5 sm:px-3 py-1 text-xs font-bold rounded-md transition ${status === 'P' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-200'}`}
                         >
                           P
                         </button>
@@ -134,7 +143,7 @@ export default function StudentTable({
                           type="button"
                           title="Absent"
                           onClick={() => onStatusChange(student.id, 'A')}
-                          className={`px-3 py-1 text-xs font-bold rounded-md transition ${status === 'A' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-200'}`}
+                          className={`px-2.5 sm:px-3 py-1 text-xs font-bold rounded-md transition ${status === 'A' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-200'}`}
                         >
                           A
                         </button>
@@ -142,7 +151,7 @@ export default function StudentTable({
                           type="button"
                           title="Late"
                           onClick={() => onStatusChange(student.id, 'L')}
-                          className={`px-3 py-1 text-xs font-bold rounded-md transition ${status === 'L' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-200'}`}
+                          className={`px-2.5 sm:px-3 py-1 text-xs font-bold rounded-md transition ${status === 'L' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-200'}`}
                         >
                           L
                         </button>
@@ -150,15 +159,15 @@ export default function StudentTable({
                           type="button"
                           title="Excused"
                           onClick={() => onStatusChange(student.id, 'E')}
-                          className={`px-3 py-1 text-xs font-bold rounded-md transition ${status === 'E' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-200'}`}
+                          className={`px-2.5 sm:px-3 py-1 text-xs font-bold rounded-md transition ${status === 'E' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-200'}`}
                         >
                           E
                         </button>
                       </div>
                     </td>
 
-                    {/* Remarks Input Column */}
-                    <td className="py-3 px-4">
+                    {/* Remarks Input Column (Desktop) */}
+                    <td className="py-3 px-4 hidden md:table-cell">
                       <input
                         type="text"
                         value={remark}

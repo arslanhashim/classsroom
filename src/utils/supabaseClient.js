@@ -28,19 +28,19 @@ export const supabase = createClient(
 
 // Helper Utilities
 
-/**
- * Validates standard UUID v4 strings.
- * @param {string|null|undefined} str
- * @returns {boolean}
- */
 export const isValidUuid = (str) =>
   Boolean(str) &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(str).trim());
 
-/**
- * Retrieves active authenticated user ID from local session cache or remote auth API.
- * @returns {Promise<string|null>}
- */
+// Standard UUID v4 Generator for Database Primary Keys
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export async function getAuthenticatedUserId() {
   try {
     const { data: { session }, error } = await supabase.auth.getSession();
@@ -57,12 +57,6 @@ export async function getAuthenticatedUserId() {
 
 // Realtime Subscriptions
 
-/**
- * Realtime Subscription Helper.
- * @param {string} userId - Authenticated user ID to filter scope.
- * @param {Function} onUpdate - Callback payload dispatch handler.
- * @returns {import('@supabase/supabase-js').RealtimeChannel | null}
- */
 export function subscribeToAttendanceUpdates(userId, onUpdate) {
   if (!userId) {
     console.warn('[Realtime Skip]: Skipping channel creation - unauthenticated user scope.');
@@ -104,10 +98,6 @@ export function subscribeToAttendanceUpdates(userId, onUpdate) {
   return channel;
 }
 
-/**
- * Safely removes active realtime subscription channel.
- * @param {import('@supabase/supabase-js').RealtimeChannel} channel
- */
 export async function unsubscribeChannel(channel) {
   if (channel) {
     try {
@@ -120,9 +110,6 @@ export async function unsubscribeChannel(channel) {
 
 // Department, Class & Student Data Services
 
-/**
- * Fetches departments associated with the user session.
- */
 export async function fetchDepartments() {
   try {
     const userId = await getAuthenticatedUserId();
@@ -142,10 +129,6 @@ export async function fetchDepartments() {
   }
 }
 
-/**
- * Fetches classes associated with a department.
- * @param {string} departmentId
- */
 export async function fetchClassesByDepartment(departmentId) {
   try {
     const userId = await getAuthenticatedUserId();
@@ -166,11 +149,6 @@ export async function fetchClassesByDepartment(departmentId) {
   }
 }
 
-/**
- * Fetches student roster strictly filtered by Class ID and User ID.
- * Maps database 'full_name' -> frontend 'name' & 'roll_no' -> 'rollNo'.
- * @param {string} classId
- */
 export async function fetchStudentsByClass(classId) {
   try {
     const userId = await getAuthenticatedUserId();
@@ -188,7 +166,7 @@ export async function fetchStudentsByClass(classId) {
     return (data || []).map((s) => ({
       id: s.id,
       rollNo: s.roll_no || '',
-      name: s.full_name || '', // Explicit mapping prevents UUID issue
+      name: s.full_name || '',
       email: s.email || '',
       departmentId: s.department_id,
       classId: s.class_id,
@@ -200,11 +178,10 @@ export async function fetchStudentsByClass(classId) {
   }
 }
 
-// Backward compatibility alias
 export const fetchStudentsByDepartment = fetchStudentsByClass;
 
 /**
- * Inserts or updates a single student record ensuring proper class_id and user_id binding.
+ * Inserts or updates a single student record with explicit UUID & unique constraint handling.
  */
 export async function addStudentToSupabase({ id, rollNo, name, email, departmentId, classId }) {
   try {
@@ -222,10 +199,8 @@ export async function addStudentToSupabase({ id, rollNo, name, email, department
       return { success: false, error: 'Valid Class selection is required to link the student.' };
     }
 
-    const studentId = id ? String(id).trim() : `std_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-
     const payload = {
-      id: studentId,
+      id: isValidUuid(id) ? id : generateUUID(),
       roll_no: cleanRollNo,
       full_name: cleanName,
       email: email ? String(email).trim().toLowerCase() : null,
@@ -236,7 +211,7 @@ export async function addStudentToSupabase({ id, rollNo, name, email, department
 
     const { data, error } = await supabase
       .from('students')
-      .upsert([payload], { onConflict: 'id' })
+      .upsert([payload], { onConflict: 'user_id, roll_no' })
       .select();
 
     if (error) throw error;
@@ -259,7 +234,7 @@ export async function addStudentToSupabase({ id, rollNo, name, email, department
 }
 
 /**
- * Inserts multiple students in batch (for CSV import) linked to a specific class and user.
+ * Inserts multiple students in robust chunks with auto-generated UUIDs and conflict handling.
  */
 export async function addStudentsBulkToSupabase(studentsList, classId, departmentId = null) {
   try {
@@ -270,8 +245,8 @@ export async function addStudentsBulkToSupabase(studentsList, classId, departmen
       return { success: false, error: 'Valid Class ID is required for bulk import.' };
     }
 
-    const rows = studentsList.map((s, index) => ({
-      id: s.id || `std_${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${index}`,
+    const rows = studentsList.map((s) => ({
+      id: isValidUuid(s.id) ? s.id : generateUUID(), // Guarantees valid UUID and satisfies NOT NULL constraint
       roll_no: String(s.rollNo || s.roll_no || '').trim(),
       full_name: String(s.name || s.full_name || '').trim(),
       email: s.email ? String(s.email).trim().toLowerCase() : null,
@@ -284,14 +259,31 @@ export async function addStudentsBulkToSupabase(studentsList, classId, departmen
       return { success: false, error: 'No valid student records found to import.' };
     }
 
-    const { data, error } = await supabase
-      .from('students')
-      .upsert(rows, { onConflict: 'id' })
-      .select();
+    // Chunking: Send 10 students at a time to prevent network drop / ERR_CONNECTION_CLOSED
+    const CHUNK_SIZE = 10;
+    let totalInserted = 0;
+    let allData = [];
 
-    if (error) throw error;
+    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+      const chunk = rows.slice(i, i + CHUNK_SIZE);
 
-    return { success: true, count: rows.length, data };
+      const { data, error } = await supabase
+        .from('students')
+        .upsert(chunk, { onConflict: 'user_id, roll_no' })
+        .select();
+
+      if (error) {
+        console.error(`[Bulk Chunk Error at index ${i}]:`, error.message);
+        throw error;
+      }
+
+      if (data) {
+        allData = allData.concat(data);
+        totalInserted += chunk.length;
+      }
+    }
+
+    return { success: true, count: totalInserted, data: allData };
   } catch (err) {
     console.error('[Bulk Import Error]: addStudentsBulkToSupabase failed:', err.message || err);
     return { success: false, error: err.message || 'Bulk operation failed.' };
@@ -300,10 +292,6 @@ export async function addStudentsBulkToSupabase(studentsList, classId, departmen
 
 // Course & Timetable Services
 
-/**
- * Fetches courses linked to authenticated user and optional class filter.
- * @param {string} [classId]
- */
 export async function fetchCourses(classId = null) {
   try {
     const userId = await getAuthenticatedUserId();
@@ -311,7 +299,7 @@ export async function fetchCourses(classId = null) {
 
     let query = supabase
       .from('courses')
-      .select('id, course_code, course_name, department_id, class_id')
+      .select('id, course_code, course_name, instructor_name, department_id, class_id')
       .eq('user_id', userId);
 
     if (classId && isValidUuid(classId)) {
@@ -328,10 +316,6 @@ export async function fetchCourses(classId = null) {
   }
 }
 
-/**
- * Fetches class timetable schedules.
- * @param {string} classId
- */
 export async function fetchClassTimetable(classId) {
   if (!classId || !isValidUuid(classId)) return [];
 
@@ -365,11 +349,6 @@ export async function fetchClassTimetable(classId) {
 
 // Attendance Management Services
 
-/**
- * Fetches attendance records for a course on a given class date.
- * @param {string} courseId
- * @param {string} classDate - ISO date string (YYYY-MM-DD)
- */
 export async function fetchAttendanceForSession(courseId, classDate) {
   if (!courseId || !classDate) return {};
 
@@ -404,9 +383,6 @@ export async function fetchAttendanceForSession(courseId, classDate) {
   }
 }
 
-/**
- * Syncs attendance records in batch into public.attendance_records.
- */
 export async function syncAttendanceToSupabase({ courseId, classDate, records, sessionId = null }) {
   if (!records || Object.keys(records).length === 0) return { success: true };
 

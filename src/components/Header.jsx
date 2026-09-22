@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, X, Code2, GraduationCap, ShieldCheck, Sparkles } from 'lucide-react';
+import { User, X, Code2, GraduationCap, Mail, ShieldCheck } from 'lucide-react';
 
 export default function Header() {
   const [isDevModalOpen, setIsDevModalOpen] = useState(false);
@@ -8,7 +8,7 @@ export default function Header() {
     <>
       <header className="bg-gradient-to-r from-orange-600 via-orange-500 to-amber-600 text-white sticky top-0 z-40 shadow-md no-print">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3.5">
+          <div className="flex items-center space-x-3">
             
             {/* Logo Container */}
             <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center p-1 shadow-md border border-orange-200 flex-shrink-0">
@@ -27,14 +27,11 @@ export default function Header() {
             </div>
 
             <div>
-              {/* Calligraphic Script & Cursive Style for Classroom */}
-              <h1 className="text-2xl font-serif italic font-bold tracking-normal leading-tight text-white drop-shadow-md">
+              <h1 className="text-xl font-extrabold tracking-wide uppercase leading-tight">
                 Classroom
               </h1>
-              <p className="text-[11px] text-orange-100/90 font-medium tracking-wide flex items-center gap-1.5 -mt-0.5">
-                <span>Thal University Bhakkar</span> 
-                <span className="text-orange-200">•</span> 
-                <span className="text-white/90 font-semibold">Attendance Portal</span>
+              <p className="text-xs text-orange-100 font-medium tracking-wider">
+                Thal University Bhakkar • Attendance Portal
               </p>
             </div>
           </div>
@@ -42,13 +39,13 @@ export default function Header() {
           {/* Developer Profile Trigger Button */}
           <button
             onClick={() => setIsDevModalOpen(true)}
-            className="px-3 py-2 text-xs font-bold bg-white/10 hover:bg-white/20 text-white rounded-xl backdrop-blur-sm transition-all duration-150 flex items-center gap-2 active:scale-95 border border-white/20 shadow-sm group"
+            className="p-2.5 text-xs font-bold bg-white/10 hover:bg-white/20 text-white rounded-xl backdrop-blur-sm transition-all duration-150 flex items-center gap-2 active:scale-95 border border-white/20 shadow-sm"
             title="Developer Info"
           >
-            <div className="w-6 h-6 rounded-full bg-white text-orange-600 flex items-center justify-center font-black text-xs shadow-sm group-hover:scale-105 transition-transform">
+            <div className="w-6 h-6 rounded-full bg-white text-orange-600 flex items-center justify-center font-black text-xs shadow-sm">
               AH
             </div>
-            <span className="hidden sm:inline font-semibold tracking-wide">Developer</span>
+            <span className="hidden sm:inline font-semibold">Developer</span>
           </button>
         </div>
       </header>
@@ -72,10 +69,8 @@ export default function Header() {
                   AH
                 </div>
                 <div>
-                  <h3 className="text-xl font-black tracking-wide flex items-center gap-1.5">
-                    Arsalan Hashim <Sparkles className="w-4 h-4 text-amber-200" />
-                  </h3>
-                  <p className="text-xs text-orange-100 font-medium">Full Stack Web and WebApp Developer</p>
+                  <h3 className="text-xl font-black tracking-wide">Arsalan Hashim</h3>
+                  <p className="text-xs text-orange-100 font-medium">Full Stack Web and Developer</p>
                 </div>
               </div>
             </div>

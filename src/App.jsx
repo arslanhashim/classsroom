@@ -4,11 +4,11 @@ import ClassStats from './components/ClassStats';
 import StudentTable from './components/StudentTable';
 import SettingsModal from './components/SettingsModal';
 import AddStudentModal from './components/AddStudentModal';
+
 import AuthModal from './components/AuthModal';
 
 import { 
   getStoredSettings, 
-  saveStoredSettings, 
   getStoredAttendance, 
   saveStoredAttendance 
 } from './utils/storage';
@@ -23,7 +23,8 @@ import {
 import { 
   supabase, 
   fetchStudentsByClass,
-  addStudentToSupabase 
+  addStudentToSupabase ,
+  addStudentsBulkToSupabase
 } from './utils/supabaseClient';
 import { 
   getActiveUser, 
@@ -81,7 +82,6 @@ export default function App() {
   
   const [newDeptName, setNewDeptName] = useState('');
   const [newClassName, setNewClassName] = useState('');
-  const [newClassSemester, setNewClassSemester] = useState('');
 
   const [settings, setSettings] = useState(() => getStoredSettings(null));
   const [students, setStudents] = useState([]);
@@ -89,7 +89,6 @@ export default function App() {
 
   const [dbPercentages, setDbPercentages] = useState([]);
   const [isSavingToDB, setIsSavingToDB] = useState(false);
-  const [isFetchingDB, setIsFetchingDB] = useState(false);
 
   const isOnline = useOnlineStatus();
   const [searchQuery, setSearchQuery] = useState('');
@@ -116,7 +115,7 @@ export default function App() {
     if (!Array.isArray(rawList)) return [];
     return rawList.map((s, index) => ({
       id: s.id,
-      serialNo: index + 1, // Proper sequential number ordering
+      serialNo: index + 1,
       rollNo: String(s.rollNo || s.roll_no || '').trim(),
       name: String(s.name || s.full_name || '').trim()
     }));
@@ -293,7 +292,7 @@ export default function App() {
       .insert([{ 
         department_id: selectedDeptId, 
         name: newClassName.trim(), 
-        semester: newClassSemester.trim() || 'Spring', 
+        semester: 'Spring', 
         user_id: user.id 
       }])
       .select();
@@ -302,14 +301,13 @@ export default function App() {
       setClasses([...classes, data[0]]);
       setSelectedClassId(data[0].id);
       setNewClassName('');
-      setNewClassSemester('');
     } else {
       alert('Failed to create class: ' + (error?.message || 'Unknown error'));
     }
   };
 
   const handleDeleteClass = useCallback(async (classId) => {
-    if (!window.confirm('Kya aap waqai is class aur iske tamam related data ko mukammal delete karna chahte hain?')) {
+    if (!window.confirm('Are you sure you want to delete this class and all related data?')) {
       return;
     }
 
@@ -326,14 +324,11 @@ export default function App() {
     if (isOnline) {
       const { error } = await supabase.from('classes').delete().eq('id', classId);
       if (error) {
-        alert('Class delete karne mein error aa gaya: ' + error.message);
-      } else {
-        alert('Class aur uska tamam data database se mukammal delete ho chuka hai!');
+        alert('Error deleting class: ' + error.message);
       }
     }
   }, [isOnline, selectedClassId, user]);
 
-  // Updated handler to accept both courseName and instructorName
   const handleAddCourse = async (courseName, instructorName = '') => {
     if (!selectedClassId || !selectedDeptId) {
       alert('Please select a department and class first.');
@@ -351,7 +346,7 @@ export default function App() {
         class_id: selectedClassId, 
         department_id: selectedDeptId,
         course_name: courseName.trim(),
-        instructor_name: instructorName.trim(), // Instructor name saved to database
+        instructor_name: instructorName.trim(),
         course_code: generatedCode,
         user_id: user?.id 
       }])
@@ -384,7 +379,6 @@ export default function App() {
     setAttendance(cachedData);
 
     if (isOnline && selectedClassId && selectedCourseId && selectedDate) {
-      setIsFetchingDB(true);
       fetchAttendanceForCourse(selectedClassId, selectedCourseId, selectedDate)
         .then((dbAttendance) => {
           if (currentFetchId === activeFetchId.current && dbAttendance && Object.keys(dbAttendance).length > 0) {
@@ -392,9 +386,6 @@ export default function App() {
             setAttendance(merged);
             saveStoredAttendance(attendanceStorageKey, merged, user.id);
           }
-        })
-        .finally(() => {
-          if (currentFetchId === activeFetchId.current) setIsFetchingDB(false);
         });
     }
   }, [attendanceStorageKey, isOnline, selectedClassId, selectedCourseId, selectedDate, user]);
@@ -470,10 +461,10 @@ export default function App() {
     updateAttendanceState(updated);
   }, [attendance, students, updateAttendanceState]);
 
-  // Professional Manual Student Addition
+  // Single Student Addition
   const handleAddStudent = useCallback(async (newStudent) => {
     if (!user?.id || !selectedDeptId || !selectedClassId || !studentCacheKey) {
-      alert('Pehle upar se Department aur Class select karein!');
+      alert('Please select a Department and Class first!');
       return;
     }
 
@@ -481,7 +472,7 @@ export default function App() {
     const nameStr = String(newStudent.name || '').trim();
 
     if (!rollNoStr || !nameStr) {
-      alert('Roll Number aur Student Name dono lazmi hain.');
+      alert('Roll Number and Student Name are required.');
       return;
     }
 
@@ -497,12 +488,33 @@ export default function App() {
       const formatted = normalizeStudentData(freshRoster);
       setStudents(formatted);
       localStorage.setItem(studentCacheKey, JSON.stringify(formatted));
-      alert('Student kamyabi ke sath manually add ho gaya!');
+      alert('Student added successfully!');
     } else {
       alert('Failed to add student: ' + result.error);
     }
   }, [user, selectedDeptId, selectedClassId, studentCacheKey]);
 
+  // Bulk Students Addition using Chunked Batch Upsert
+  const handleBulkAddStudents = useCallback(async (studentsArray) => {
+    if (!user?.id || !selectedDeptId || !selectedClassId || !studentCacheKey) {
+      alert('Please select a Department and Class first!');
+      return 0;
+    }
+
+    // Call the optimized batch helper
+    const result = await addStudentsBulkToSupabase(studentsArray, selectedClassId, selectedDeptId);
+
+    if (result.success) {
+      const freshRoster = await fetchStudentsByClass(selectedClassId);
+      const formatted = normalizeStudentData(freshRoster);
+      setStudents(formatted);
+      localStorage.setItem(studentCacheKey, JSON.stringify(formatted));
+      return result.count;
+    } else {
+      alert('Bulk import failed: ' + result.error);
+      return 0;
+    }
+  }, [user, selectedDeptId, selectedClassId, studentCacheKey]);
   const handleDeleteStudent = useCallback(async (id) => {
     if (!user?.id || !studentCacheKey || !window.confirm('Remove student from roster?')) return;
 
@@ -759,8 +771,8 @@ export default function App() {
         <AddStudentModal
           isOpen={isAddStudentOpen}
           onClose={() => setIsAddStudentOpen(false)}
-          onAdd={handleAddStudent}
           onAddStudent={handleAddStudent}
+          onBulkAdd={handleBulkAddStudents}
         />
       )}
     </div>

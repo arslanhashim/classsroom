@@ -1,130 +1,209 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { X, UserPlus, Users, FileText, Loader2 } from 'lucide-react';
 
-/**
- * AddStudentModal component for manually adding new students to the roster.
- *
- * @param {Object} props
- * @param {Function} props.onAdd - Callback triggered with the new student object
- * @param {Function} props.onClose - Callback triggered to close the modal
- */
-export default function AddStudentModal({ onAdd, onClose }) {
-  const [name, setName] = useState('');
+export default function AddStudentModal({ isOpen, onClose, onAddStudent, onBulkAdd }) {
+  const [activeTab, setActiveTab] = useState('single'); // 'single' or 'bulk'
+  
+  // Single student state
   const [rollNo, setRollNo] = useState('');
-  const [error, setError] = useState('');
+  const [name, setName] = useState('');
 
-  // Close modal when pressing the Escape key
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  // Bulk student state
+  const [bulkText, setBulkText] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
+  if (!isOpen) return null;
+
+  const handleSingleSubmit = (e) => {
     e.preventDefault();
-    const trimmedName = name.trim();
-    const trimmedRoll = rollNo.trim();
+    if (!rollNo.trim() || !name.trim()) return;
+    onAddStudent({ rollNo: rollNo.trim(), name: name.trim() });
+    setRollNo('');
+    setName('');
+    onClose();
+  };
 
-    if (!trimmedName || !trimmedRoll) {
-      setError('Please fill in all required fields.');
-      return;
+  const handleBulkSubmit = async (e) => {
+    e.preventDefault();
+    if (!bulkText.trim()) return;
+
+    setIsSubmitting(true);
+    const lines = bulkText.split('\n');
+    const studentsArray = [];
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      
+      const separator = line.includes('\t') ? '\t' : ',';
+      const parts = line.split(separator);
+
+      if (parts.length >= 2) {
+        const rNo = parts[0].trim();
+        const sName = parts.slice(1).join(' ').trim();
+        
+        if (rNo && sName) {
+          studentsArray.push({ rollNo: rNo, name: sName });
+        }
+      }
     }
 
-    onAdd({
-      id: crypto.randomUUID(), // Generates a clean UUID v4 for database compatibility
-      name: trimmedName,
-      rollNo: trimmedRoll
-    });
+    let addedCount = 0;
+    if (studentsArray.length > 0) {
+      if (onBulkAdd) {
+        // Use optimized bulk handler if provided by parent App component
+        addedCount = await onBulkAdd(studentsArray);
+      } else {
+        // Fallback loop if onBulkAdd is missing
+        for (const s of studentsArray) {
+          await onAddStudent(s);
+          addedCount++;
+        }
+      }
+    }
 
-    setName('');
-    setRollNo('');
-    setError('');
+    setIsSubmitting(false);
+
+    if (addedCount > 0) {
+      alert(`Successfully added ${addedCount} students to the roster!`);
+    } else {
+      alert('No valid student data found. Please check the format (RollNo, Name).');
+    }
+
+    setBulkText('');
     onClose();
   };
 
   return (
-    <div
-      className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="add-student-title"
-    >
-      <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl border border-slate-200 transition-all">
-        <div className="flex items-center justify-between mb-4">
-          <h3 id="add-student-title" className="text-lg font-bold text-slate-900">
-            Add New Student
+    <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+        
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+            <UserPlus className="w-5 h-5 text-orange-600" /> Add Students to Roster
           </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 rounded-lg p-1 transition-colors"
-            aria-label="Close modal"
-          >
-            ✕
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 font-bold text-sm">
+            <X className="w-5 h-5" />
           </button>
         </div>
 
-        {error && (
-          <div className="mb-4 p-2.5 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
-            {error}
-          </div>
+        {/* Tabs Switcher */}
+        <div className="flex bg-slate-100 p-1 rounded-xl">
+          <button
+            type="button"
+            onClick={() => setActiveTab('single')}
+            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+              activeTab === 'single' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            <UserPlus className="w-4 h-4" /> Single Student
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('bulk')}
+            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+              activeTab === 'bulk' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            <Users className="w-4 h-4" /> Bulk Import
+          </button>
+        </div>
+
+        {/* Tab 1: Single Student Form */}
+        {activeTab === 'single' && (
+          <form onSubmit={handleSingleSubmit} className="space-y-4 pt-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">Roll Number</label>
+              <input
+                type="text"
+                placeholder="e.g., IT-01 or 2026-BSIT-12"
+                value={rollNo}
+                onChange={(e) => setRollNo(e.target.value)}
+                required
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">Student Name</label>
+              <input
+                type="text"
+                placeholder="e.g., Muhammad Arsalan"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-colors shadow-sm"
+              >
+                Add Student
+              </button>
+            </div>
+          </form>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
-              Full Name <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              required
-              value={name}
-              onChange={(e) => {
-                setName(e.target.value);
-                setError('');
-              }}
-              placeholder="e.g. John Doe"
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 focus:outline-none transition-shadow"
-            />
-          </div>
+        {/* Tab 2: Bulk Import Form */}
+        {activeTab === 'bulk' && (
+          <form onSubmit={handleBulkSubmit} className="space-y-3 pt-2">
+            <div className="space-y-1">
+              <div className="flex justify-between items-center">
+                <label className="text-xs font-bold text-slate-700">Paste Students List (Excel / CSV)</label>
+                <span className="text-[10px] text-slate-400">Format: RollNo [Comma/Tab] Name</span>
+              </div>
+              <textarea
+                rows="6"
+                placeholder={`Paste directly from Excel or Notepad:\n\nIT-01, Ali Hassan\nIT-02, Muhammad Ahmad\nIT-03, Zainab Bibi`}
+                value={bulkText}
+                onChange={(e) => setBulkText(e.target.value)}
+                required
+                disabled={isSubmitting}
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:opacity-50"
+              ></textarea>
+            </div>
 
-          <div>
-            <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
-              Roll / ID Number <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              required
-              value={rollNo}
-              onChange={(e) => {
-                setRollNo(e.target.value);
-                setError('');
-              }}
-              placeholder="e.g. BSIT-F22-01"
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 focus:outline-none transition-shadow"
-            />
-          </div>
+            <div className="bg-orange-50 border border-orange-100 p-2.5 rounded-xl text-[11px] text-orange-900 flex items-start gap-2">
+              <FileText className="w-4 h-4 text-orange-600 shrink-0 mt-0.5" />
+              <p>Each line should contain one student. Ensure Roll Number and Name are separated by a **Comma (,)** or **Tab**.</p>
+            </div>
 
-          <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-2 text-xs font-semibold bg-orange-600 hover:bg-orange-700 active:bg-orange-800 text-white rounded-lg shadow-sm transition-colors"
-            >
-              Add Student
-            </button>
-          </div>
-        </form>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={isSubmitting}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold rounded-xl transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Importing...
+                  </>
+                ) : (
+                  'Import All Students'
+                )}
+              </button>
+            </div>
+          </form>
+        )}
+
       </div>
     </div>
   );

@@ -246,7 +246,7 @@ export async function addStudentsBulkToSupabase(studentsList, classId, departmen
     }
 
     const rows = studentsList.map((s) => ({
-      id: isValidUuid(s.id) ? s.id : generateUUID(), // Guarantees valid UUID and satisfies NOT NULL constraint
+      id: isValidUuid(s.id) ? s.id : generateUUID(),
       roll_no: String(s.rollNo || s.roll_no || '').trim(),
       full_name: String(s.name || s.full_name || '').trim(),
       email: s.email ? String(s.email).trim().toLowerCase() : null,
@@ -259,7 +259,6 @@ export async function addStudentsBulkToSupabase(studentsList, classId, departmen
       return { success: false, error: 'No valid student records found to import.' };
     }
 
-    // Chunking: Send 10 students at a time to prevent network drop / ERR_CONNECTION_CLOSED
     const CHUNK_SIZE = 10;
     let totalInserted = 0;
     let allData = [];
@@ -396,16 +395,51 @@ export async function syncAttendanceToSupabase({ courseId, classDate, records, s
 
     const validStatuses = new Set(['P', 'A', 'L', 'E']);
 
-    const rows = Object.entries(records).map(([studentId, record]) => ({
-      student_id: String(studentId),
-      course_id: courseId,
-      class_date: classDate,
-      status: validStatuses.has(record.status) ? record.status : 'P',
-      remark: record.remark ? String(record.remark).trim() : null,
-      session_id: isValidUuid(sessionId) ? sessionId : null,
-      updated_at: new Date().toISOString(),
-      user_id: userId,
-    }));
+    // Fetch existing valid student IDs from database to map or validate against constraints
+    const { data: dbStudents, error: studentFetchErr } = await supabase
+      .from('students')
+      .select('id, roll_no')
+      .eq('user_id', userId);
+
+    if (studentFetchErr) throw studentFetchErr;
+
+    // Create lookup maps for both UUID and Roll Number fallbacks
+    const uuidMap = new Set((dbStudents || []).map(s => s.id));
+    const rollNoToUuidMap = (dbStudents || []).reduce((acc, s) => {
+      if (s.roll_no) acc[s.roll_no.trim()] = s.id;
+      return acc;
+    }, {});
+
+    const rows = [];
+    for (const [key, record] of Object.entries(records)) {
+      let resolvedStudentId = key;
+
+      // If the provided key is not a valid UUID, check if it's a roll number and resolve to real UUID
+      if (!isValidUuid(resolvedStudentId)) {
+        resolvedStudentId = rollNoToUuidMap[String(key).trim()];
+      }
+
+      // If we still don't have a valid UUID matching the DB table, skip or handle safely
+      if (!isValidUuid(resolvedStudentId) || !uuidMap.has(resolvedStudentId)) {
+        console.warn(`[Sync Warning]: Skipping student key "${key}" because it does not match any existing database student UUID or Roll No.`);
+        continue;
+      }
+
+      rows.push({
+        student_id: resolvedStudentId,
+        course_id: courseId,
+        class_date: classDate,
+        status: validStatuses.has(record.status) ? record.status : 'P',
+        remark: record.remark ? String(record.remark).trim() : null,
+        session_id: isValidUuid(sessionId) ? sessionId : null,
+        updated_at: new Date().toISOString(),
+        user_id: userId,
+      });
+    }
+
+    if (rows.length === 0) {
+      return { success: false, error: 'No valid student attendance rows could be resolved for syncing.' };
+    }
 
     const { data, error } = await supabase
       .from('attendance_records')
@@ -416,7 +450,7 @@ export async function syncAttendanceToSupabase({ courseId, classDate, records, s
 
     return { success: true, data };
   } catch (err) {
-    console.error('[Sync Error]: syncAttendanceToSupabase failed:', err.message || err);
+    console.log('[Sync Error]: syncAttendanceToSupabase failed:', err.message || err);
     return { success: false, error: err.message || 'Attendance sync failed.' };
   }
 }
